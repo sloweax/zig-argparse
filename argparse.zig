@@ -16,12 +16,21 @@ pub const Option = struct {
     /// used internally
     idx: usize = 0,
 
-    pub fn fromName(name: []const u8) Option {
-        std.debug.assert(name.len > 0);
-        return .{
-            .name = if (name.len == 1) null else name,
-            .short = name[0],
-        };
+    pub const flag: Option = .{ .type = .flag };
+    pub const optional: Option = .{ .type = .optional };
+    pub const positional: Option = .{ .type = .positional };
+    pub const ignored: Option = .{ .type = .ignored };
+
+    pub fn withName(o: Option, name: []const u8) Option {
+        var new = o;
+        if (name.len == 0) {
+            new.name = null;
+            new.short = null;
+        } else {
+            new.short = name[0];
+            new.name = if (name.len == 1) null else name;
+        }
+        return new;
     }
 };
 
@@ -54,12 +63,9 @@ pub const Parser = struct {
 
         inline for (ti.@"struct".fields, 0..) |f, i| {
             const o: Option = comptime blk: {
-                if (!@hasDecl(@TypeOf(st.*), "OptionMeta")) break :blk .fromName(f.name);
-                if (!@hasField(@TypeOf(st.*).OptionMeta, f.name)) break :blk .fromName(f.name);
-                for (@typeInfo(@TypeOf(st.*).OptionMeta).@"struct".fields) |f2| {
-                    if (std.mem.eql(u8, f.name, f2.name)) break :blk f2.defaultValue() orelse .fromName(f.name);
-                }
-                break :blk .fromName(f.name);
+                if (!@hasDecl(@TypeOf(st.*), "OptionMeta")) break :blk Option.optional.withName(f.name);
+                if (!@hasDecl(@TypeOf(st.*).OptionMeta, f.name)) break :blk Option.optional.withName(f.name);
+                break :blk @field(@TypeOf(st.*).OptionMeta, f.name);
             };
             opt_buf[i] = o;
             opt_buf[i].idx = i;
@@ -257,6 +263,7 @@ pub const Parser = struct {
             },
             else => {},
         }
+
         @compileError("Unsupported type");
     }
 };

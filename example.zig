@@ -9,8 +9,8 @@ pub const Example = struct {
     ip: std.Io.net.IpAddress = .{ .ip4 = .loopback(0) },
 
     pub const OptionMeta = struct {
-        ip: Option = .{ .type = .positional, .name = "ip" },
-        flag: Option = .{ .type = .flag, .name = "flag", .short = 'f' },
+        pub const ip = Option.positional.withName("ip");
+        pub const flag = Option.flag.withName("flag");
     };
 
     pub const OptionMetaFn = struct {
