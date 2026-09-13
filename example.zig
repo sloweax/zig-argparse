@@ -11,6 +11,7 @@ pub const Example = struct {
     pub const OptionMeta = struct {
         pub const ip = Option.positional.withName("ip");
         pub const flag = Option.flag.withName("flag");
+        // other fields are equivalent to Option.optional.withName("xyz");
     };
 
     pub const OptionMetaFn = struct {
