@@ -1,22 +1,3 @@
-pub fn parseInt(p: *Parser, comptime T: type, dst: *T, src: []const u8) !void {
-    _ = p;
-    dst.* = try std.fmt.parseInt(T, src, 10);
-}
-
-pub fn parseFloat(p: *Parser, comptime T: type, dst: *T, src: []const u8) !void {
-    _ = p;
-    dst.* = try std.fmt.parseFloat(T, src);
-}
-
-pub fn parseConstString(p: *Parser, dst: *[]const u8, src: []const u8) !void {
-    _ = p;
-    dst.* = src;
-}
-
-pub fn parseString(p: *Parser, dst: *[]u8, src: []const u8) !void {
-    dst.* = try p.o.a.?.dupe(u8, src);
-}
-
 pub const Option = struct {
     name: ?[]const u8 = null,
     short: ?u8 = null,
@@ -230,25 +211,50 @@ pub const Parser = struct {
             }
         }
 
-        switch (@typeInfo(@TypeOf(dst.*))) {
+        const t = blk: {
+            const tmp = @typeInfo(@TypeOf(dst.*));
+            switch (tmp) {
+                .optional => |o| {
+                    break :blk @typeInfo(o.child);
+                },
+                else => break :blk tmp,
+            }
+        };
+
+        switch (t) {
             .int => |i| {
-                return parseInt(self, @Int(i.signedness, i.bits), dst, src.?);
+                dst.* = try std.fmt.parseInt(@Int(i.signedness, i.bits), src.?, 10);
+                return;
             },
             .float => {
-                return parseFloat(self, @TypeOf(dst.*), dst, src.?);
+                switch (@typeInfo(@TypeOf(dst.*))) {
+                    .optional => |o| {
+                        dst.* = try std.fmt.parseFloat(o.child, src.?);
+                    },
+                    else => {
+                        dst.* = try std.fmt.parseFloat(@TypeOf(dst.*), src.?);
+                    },
+                }
+                return;
             },
             else => {},
         }
 
         switch (@TypeOf(dst.*)) {
-            bool => {
+            bool, ?bool => {
                 if (opt.type == .flag) {
                     dst.* = true;
                     return;
                 }
             },
-            []const u8 => return parseConstString(self, dst, src.?),
-            []u8 => return parseString(self, dst, src.?),
+            []const u8, ?[]const u8 => {
+                dst.* = src.?;
+                return;
+            },
+            []u8, ?[]u8 => {
+                dst.* = try self.o.a.?.dupe(u8, src);
+                return;
+            },
             else => {},
         }
         @compileError("Unsupported type");
