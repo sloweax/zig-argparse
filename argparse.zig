@@ -6,8 +6,8 @@ pub const Option = struct {
         flag,
         optional,
         positional,
+        command,
         ignored,
-        // TODO: subcommand
     } = .optional,
 
     /// stops parsing after hitting this option
@@ -19,6 +19,7 @@ pub const Option = struct {
     pub const flag: Option = .{ .type = .flag };
     pub const optional: Option = .{ .type = .optional };
     pub const positional: Option = .{ .type = .positional };
+    pub const command: Option = .{ .type = .command };
     pub const ignored: Option = .{ .type = .ignored };
 
     pub fn withName(o: Option, name: []const u8) Option {
@@ -111,6 +112,15 @@ pub const Parser = struct {
             break :blk opt_buf[flags.len + optionals.len .. i];
         };
 
+        const commands: []Option = comptime blk: {
+            var i: usize = flags.len + optionals.len + positionals.len;
+            for (opt_buf[flags.len + optionals.len + positionals.len ..]) |a| {
+                if (a.type != .command) break;
+                i += 1;
+            }
+            break :blk opt_buf[flags.len + optionals.len + positionals.len .. i];
+        };
+
         next: while (it.next()) |s| {
             if (s.len >= 2 and s[0] == '-' and s[1] != '-') {
                 // '-f+' OR '-f+o' 'ANY' OR '-f+o' OR '-f+oANY'
@@ -198,6 +208,18 @@ pub const Parser = struct {
                         try parse_field(self, st, ti.@"struct".fields[o.idx], o, &@field(st, ti.@"struct".fields[o.idx].name), s);
                         positional_idx += 1;
                         if (o.stop) return else continue :next;
+                    }
+                }
+            }
+
+            inline for (commands) |o| {
+                const u = @field(st, ti.@"struct".fields[o.idx].name);
+                const ui = @typeInfo(@TypeOf(u));
+                const uci = @typeInfo(ui.optional.child);
+                inline for (uci.@"union".fields) |f| {
+                    if (std.mem.eql(u8, s, f.name)) {
+                        @field(st, ti.@"struct".fields[o.idx].name) = @unionInit(ui.optional.child, f.name, .{});
+                        return @call(.auto, Parser.parse, .{ self, it, &@field(@field(st, ti.@"struct".fields[o.idx].name).?, f.name) });
                     }
                 }
             }
