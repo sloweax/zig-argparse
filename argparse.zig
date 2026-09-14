@@ -14,7 +14,7 @@ pub const Option = struct {
     stop: bool = false,
 
     /// used internally
-    idx: usize = 0,
+    field: ?*const std.builtin.Type.StructField = null,
 
     pub const flag: Option = .{ .type = .flag };
     pub const optional: Option = .{ .type = .optional };
@@ -69,7 +69,7 @@ pub const Parser = struct {
                 break :blk @field(@TypeOf(st.*).OptionMeta, f.name);
             };
             opt_buf[i] = o;
-            opt_buf[i].idx = i;
+            opt_buf[i].field = &f;
         }
 
         for (opt_buf) |a| {
@@ -78,7 +78,7 @@ pub const Parser = struct {
 
         comptime std.sort.block(Option, &opt_buf, {}, struct {
             pub fn lessfn(_: void, a1: Option, a2: Option) bool {
-                if (a1.type == a2.type) return a1.idx < a2.idx;
+                if (a1.type == a2.type) return false;
                 return @intFromEnum(a1.type) < @intFromEnum(a2.type);
             }
         }.lessfn);
@@ -128,7 +128,7 @@ pub const Parser = struct {
                 next_dash: for (s[1..], 0..) |c, i| {
                     inline for (flags) |o| {
                         if (o.short == c) {
-                            try parse_field(self, st, ti.@"struct".fields[o.idx], o, &@field(st, ti.@"struct".fields[o.idx].name), null);
+                            try parse_field(self, st, o, &@field(st, o.field.?.name), null);
                             if (o.stop) return else continue :next_dash;
                         }
                     }
@@ -137,13 +137,13 @@ pub const Parser = struct {
                         if (o.short == c) {
                             if (i == s.len - 2) {
                                 if (it.next()) |next| {
-                                    try parse_field(self, st, ti.@"struct".fields[o.idx], o, &@field(st, ti.@"struct".fields[o.idx].name), next);
+                                    try parse_field(self, st, o, &@field(st, o.field.?.name), next);
                                 } else {
                                     // std.log.err("option -{c} requires an argument", .{o.short.?});
                                     return error.MissingArgument;
                                 }
                             } else {
-                                try parse_field(self, st, ti.@"struct".fields[o.idx], o, &@field(st, ti.@"struct".fields[o.idx].name), s[1..][i + 1 ..]);
+                                try parse_field(self, st, o, &@field(st, o.field.?.name), s[1..][i + 1 ..]);
                             }
                             if (o.stop) return else continue :next;
                         }
@@ -163,14 +163,14 @@ pub const Parser = struct {
                     const key = tmp.next().?;
                     inline for (optionals) |o| {
                         if (std.mem.eql(u8, o.name orelse continue, key[2..])) {
-                            try parse_field(self, st, ti.@"struct".fields[o.idx], o, &@field(st, ti.@"struct".fields[o.idx].name), s[key.len + 1 ..]);
+                            try parse_field(self, st, o, &@field(st, o.field.?.name), s[key.len + 1 ..]);
                             if (o.stop) return else continue :next;
                         }
                     }
                 } else {
                     inline for (flags) |o| {
                         if (std.mem.eql(u8, o.name orelse continue, s[2..])) {
-                            try parse_field(self, st, ti.@"struct".fields[o.idx], o, &@field(st, ti.@"struct".fields[o.idx].name), null);
+                            try parse_field(self, st, o, &@field(st, o.field.?.name), null);
                             if (o.stop) return else continue :next;
                         }
                     }
@@ -178,7 +178,7 @@ pub const Parser = struct {
                     inline for (optionals) |o| {
                         if (std.mem.eql(u8, o.name orelse continue, s[2..])) {
                             if (it.next()) |next| {
-                                try parse_field(self, st, ti.@"struct".fields[o.idx], o, &@field(st, ti.@"struct".fields[o.idx].name), next);
+                                try parse_field(self, st, o, &@field(st, o.field.?.name), next);
                                 if (o.stop) return else continue :next;
                             } else {
                                 // std.log.err("option {s} requires an argument", .{s});
@@ -197,7 +197,7 @@ pub const Parser = struct {
                 if (i == positional_idx) {
                     if (std.mem.eql(u8, "--", s)) {
                         if (it.next()) |next| {
-                            try parse_field(self, st, ti.@"struct".fields[o.idx], o, &@field(st, ti.@"struct".fields[o.idx].name), next);
+                            try parse_field(self, st, o, &@field(st, o.field.?.name), next);
                             positional_idx += 1;
                             if (o.stop) return else continue :next;
                         } else {
@@ -205,7 +205,7 @@ pub const Parser = struct {
                             return error.MissingArgument;
                         }
                     } else {
-                        try parse_field(self, st, ti.@"struct".fields[o.idx], o, &@field(st, ti.@"struct".fields[o.idx].name), s);
+                        try parse_field(self, st, o, &@field(st, o.field.?.name), s);
                         positional_idx += 1;
                         if (o.stop) return else continue :next;
                     }
@@ -213,13 +213,13 @@ pub const Parser = struct {
             }
 
             inline for (commands) |o| {
-                const u = @field(st, ti.@"struct".fields[o.idx].name);
+                const u = @field(st, o.field.?.name);
                 const ui = @typeInfo(@TypeOf(u));
                 const uci = @typeInfo(ui.optional.child);
                 inline for (uci.@"union".fields) |f| {
                     if (std.mem.eql(u8, s, f.name)) {
-                        @field(st, ti.@"struct".fields[o.idx].name) = @unionInit(ui.optional.child, f.name, .{});
-                        return @call(.auto, Parser.parse, .{ self, it, &@field(@field(st, ti.@"struct".fields[o.idx].name).?, f.name) });
+                        @field(st, o.field.?.name) = @unionInit(ui.optional.child, f.name, .{});
+                        return @call(.auto, Parser.parse, .{ self, it, &@field(@field(st, o.field.?.name).?, f.name) });
                     }
                 }
             }
@@ -229,7 +229,9 @@ pub const Parser = struct {
         }
     }
 
-    fn parse_field(self: *Parser, st: anytype, comptime field: std.builtin.Type.StructField, comptime opt: Option, dst: anytype, src: ?[]const u8) !void {
+    fn parse_field(self: *Parser, st: anytype, comptime opt: Option, dst: anytype, src: ?[]const u8) !void {
+        const field = opt.field.?;
+
         if (@hasDecl(@TypeOf(st.*), "OptionMetaFn")) {
             if (@hasDecl(@TypeOf(st.*).OptionMetaFn, field.name)) {
                 return switch (opt.type) {
