@@ -10,10 +10,12 @@ pub const Example = struct {
     str: []const u8 = "",
     num: i32 = 0,
     ip: std.Io.net.IpAddress = .{ .ip4 = .loopback(0) },
+    ignored: i32 = 0,
 
     pub const OptionMeta = struct {
         pub const ip = Option.positional.withName("ip");
         pub const flag = Option.flag.withName("flag");
+        pub const ignored = Option.ignored;
         // other fields are equivalent to Option.optional.withName("xyz");
     };
 
