@@ -268,6 +268,7 @@ pub const Parser = struct {
                 inline for (uci.@"union".fields) |f| {
                     if (std.mem.eql(u8, s, f.name)) {
                         @field(st, o.f.name) = @unionInit(ui.optional.child, f.name, .{});
+                        if (o.o.stop) return;
                         return @call(.auto, Parser.parse, .{ self, it, &@field(@field(st, o.f.name).?, f.name) });
                     }
                 }
