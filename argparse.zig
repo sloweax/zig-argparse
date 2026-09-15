@@ -35,6 +35,57 @@ pub const Option = struct {
     }
 };
 
+pub fn defaultParseFlag(_: *Parser, dst: anytype) !void {
+    const T = switch (@typeInfo(@TypeOf(dst.*))) {
+        .optional => |o| o.child,
+        else => @TypeOf(dst.*),
+    };
+
+    switch (T) {
+        bool => {
+            dst.* = true;
+            return;
+        },
+        else => {},
+    }
+
+    @compileError("Unsupported type");
+}
+
+pub fn defaultParse(p: *Parser, dst: anytype, src: []const u8) !void {
+    const T = switch (@typeInfo(@TypeOf(dst.*))) {
+        .optional => |o| o.child,
+        else => @TypeOf(dst.*),
+    };
+    const TI = @typeInfo(T);
+
+    switch (TI) {
+        .int => |i| {
+            dst.* = try std.fmt.parseInt(@Int(i.signedness, i.bits), src, 10);
+            return;
+        },
+        .float => {
+            dst.* = try std.fmt.parseFloat(T, src);
+            return;
+        },
+        else => {},
+    }
+
+    switch (T) {
+        []const u8 => {
+            dst.* = src;
+            return;
+        },
+        []u8 => {
+            dst.* = try p.o.a.?.dupe(u8, src);
+            return;
+        },
+        else => {},
+    }
+
+    @compileError("Unsupported type");
+}
+
 pub const Parser = struct {
     // TODO: add option to generate usage and --help
     // TODO: add option to generate diagnostics
@@ -128,7 +179,7 @@ pub const Parser = struct {
                 next_dash: for (s[1..], 0..) |c, i| {
                     inline for (flags) |o| {
                         if (o.short == c) {
-                            try parse_field(self, st, o, &@field(st, o.field.?.name), null);
+                            try parseField(self, st, o, &@field(st, o.field.?.name), null);
                             if (o.stop) return else continue :next_dash;
                         }
                     }
@@ -137,13 +188,13 @@ pub const Parser = struct {
                         if (o.short == c) {
                             if (i == s.len - 2) {
                                 if (it.next()) |next| {
-                                    try parse_field(self, st, o, &@field(st, o.field.?.name), next);
+                                    try parseField(self, st, o, &@field(st, o.field.?.name), next);
                                 } else {
                                     // std.log.err("option -{c} requires an argument", .{o.short.?});
                                     return error.MissingArgument;
                                 }
                             } else {
-                                try parse_field(self, st, o, &@field(st, o.field.?.name), s[1..][i + 1 ..]);
+                                try parseField(self, st, o, &@field(st, o.field.?.name), s[1..][i + 1 ..]);
                             }
                             if (o.stop) return else continue :next;
                         }
@@ -163,14 +214,14 @@ pub const Parser = struct {
                     const key = tmp.next().?;
                     inline for (optionals) |o| {
                         if (std.mem.eql(u8, o.name orelse continue, key[2..])) {
-                            try parse_field(self, st, o, &@field(st, o.field.?.name), s[key.len + 1 ..]);
+                            try parseField(self, st, o, &@field(st, o.field.?.name), s[key.len + 1 ..]);
                             if (o.stop) return else continue :next;
                         }
                     }
                 } else {
                     inline for (flags) |o| {
                         if (std.mem.eql(u8, o.name orelse continue, s[2..])) {
-                            try parse_field(self, st, o, &@field(st, o.field.?.name), null);
+                            try parseField(self, st, o, &@field(st, o.field.?.name), null);
                             if (o.stop) return else continue :next;
                         }
                     }
@@ -178,7 +229,7 @@ pub const Parser = struct {
                     inline for (optionals) |o| {
                         if (std.mem.eql(u8, o.name orelse continue, s[2..])) {
                             if (it.next()) |next| {
-                                try parse_field(self, st, o, &@field(st, o.field.?.name), next);
+                                try parseField(self, st, o, &@field(st, o.field.?.name), next);
                                 if (o.stop) return else continue :next;
                             } else {
                                 // std.log.err("option {s} requires an argument", .{s});
@@ -197,7 +248,7 @@ pub const Parser = struct {
                 if (i == positional_idx) {
                     if (std.mem.eql(u8, "--", s)) {
                         if (it.next()) |next| {
-                            try parse_field(self, st, o, &@field(st, o.field.?.name), next);
+                            try parseField(self, st, o, &@field(st, o.field.?.name), next);
                             positional_idx += 1;
                             if (o.stop) return else continue :next;
                         } else {
@@ -205,7 +256,7 @@ pub const Parser = struct {
                             return error.MissingArgument;
                         }
                     } else {
-                        try parse_field(self, st, o, &@field(st, o.field.?.name), s);
+                        try parseField(self, st, o, &@field(st, o.field.?.name), s);
                         positional_idx += 1;
                         if (o.stop) return else continue :next;
                     }
@@ -229,7 +280,7 @@ pub const Parser = struct {
         }
     }
 
-    fn parse_field(self: *Parser, st: anytype, comptime opt: Option, dst: anytype, src: ?[]const u8) !void {
+    fn parseField(self: *Parser, st: anytype, comptime opt: Option, dst: anytype, src: ?[]const u8) !void {
         const field = opt.field.?;
 
         if (@hasDecl(@TypeOf(st.*), "OptionMetaFn")) {
@@ -241,54 +292,11 @@ pub const Parser = struct {
             }
         }
 
-        const t = blk: {
-            const tmp = @typeInfo(@TypeOf(dst.*));
-            switch (tmp) {
-                .optional => |o| {
-                    break :blk @typeInfo(o.child);
-                },
-                else => break :blk tmp,
-            }
+        return switch (opt.type) {
+            .flag => defaultParseFlag(self, dst),
+            .optional, .positional => defaultParse(self, dst, src.?),
+            .command, .ignored => @compileError("Unsupported type"),
         };
-
-        switch (t) {
-            .int => |i| {
-                dst.* = try std.fmt.parseInt(@Int(i.signedness, i.bits), src.?, 10);
-                return;
-            },
-            .float => {
-                switch (@typeInfo(@TypeOf(dst.*))) {
-                    .optional => |o| {
-                        dst.* = try std.fmt.parseFloat(o.child, src.?);
-                    },
-                    else => {
-                        dst.* = try std.fmt.parseFloat(@TypeOf(dst.*), src.?);
-                    },
-                }
-                return;
-            },
-            else => {},
-        }
-
-        switch (@TypeOf(dst.*)) {
-            bool, ?bool => {
-                if (opt.type == .flag) {
-                    dst.* = true;
-                    return;
-                }
-            },
-            []const u8, ?[]const u8 => {
-                dst.* = src.?;
-                return;
-            },
-            []u8, ?[]u8 => {
-                dst.* = try self.o.a.?.dupe(u8, src);
-                return;
-            },
-            else => {},
-        }
-
-        @compileError("Unsupported type");
     }
 };
 
