@@ -32,7 +32,7 @@ pub const Option = struct {
     }
 };
 
-const OptionField = struct { o: Option, f: std.builtin.Type.StructField };
+const OptionField = struct { o: Option, f: std.builtin.Type.StructField, i: usize };
 
 pub fn defaultParseFlag(_: *Parser, dst: anytype) !void {
     const T = switch (@typeInfo(@TypeOf(dst.*))) {
@@ -118,7 +118,7 @@ pub const Parser = struct {
                 if (!@hasDecl(@TypeOf(st.*).OptionMeta, f.name)) break :blk Option.optional.withName(f.name);
                 break :blk @field(@TypeOf(st.*).OptionMeta, f.name);
             };
-            opt_buf[i] = .{ .o = o, .f = f };
+            opt_buf[i] = .{ .o = o, .f = f, .i = i };
         }
 
         inline for (opt_buf) |o| {
@@ -127,7 +127,7 @@ pub const Parser = struct {
 
         comptime std.sort.block(OptionField, &opt_buf, {}, struct {
             pub fn lessfn(_: void, o1: OptionField, o2: OptionField) bool {
-                if (o1.o.type == o2.o.type) return false;
+                if (o1.o.type == o2.o.type) return o1.i < o2.i;
                 return @intFromEnum(o1.o.type) < @intFromEnum(o2.o.type);
             }
         }.lessfn);
