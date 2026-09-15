@@ -13,9 +13,6 @@ pub const Option = struct {
     /// stops parsing after hitting this option
     stop: bool = false,
 
-    /// used internally
-    field: ?*const std.builtin.Type.StructField = null,
-
     pub const flag: Option = .{ .type = .flag };
     pub const optional: Option = .{ .type = .optional };
     pub const positional: Option = .{ .type = .positional };
@@ -34,6 +31,8 @@ pub const Option = struct {
         return new;
     }
 };
+
+const OptionField = struct { o: Option, f: std.builtin.Type.StructField };
 
 pub fn defaultParseFlag(_: *Parser, dst: anytype) !void {
     const T = switch (@typeInfo(@TypeOf(dst.*))) {
@@ -111,7 +110,7 @@ pub const Parser = struct {
             },
         }
 
-        comptime var opt_buf = std.mem.zeroes([ti.@"struct".fields.len]Option);
+        comptime var opt_buf: [ti.@"struct".fields.len]OptionField = undefined;
 
         inline for (ti.@"struct".fields, 0..) |f, i| {
             const o: Option = comptime blk: {
@@ -119,34 +118,33 @@ pub const Parser = struct {
                 if (!@hasDecl(@TypeOf(st.*).OptionMeta, f.name)) break :blk Option.optional.withName(f.name);
                 break :blk @field(@TypeOf(st.*).OptionMeta, f.name);
             };
-            opt_buf[i] = o;
-            opt_buf[i].field = &f;
+            opt_buf[i] = .{ .o = o, .f = f };
         }
 
-        for (opt_buf) |a| {
-            std.debug.assert((a.name != null or a.short != null) or a.type == .ignored);
+        inline for (opt_buf) |o| {
+            std.debug.assert((o.o.name != null or o.o.short != null) or o.o.type == .ignored);
         }
 
-        comptime std.sort.block(Option, &opt_buf, {}, struct {
-            pub fn lessfn(_: void, a1: Option, a2: Option) bool {
-                if (a1.type == a2.type) return false;
-                return @intFromEnum(a1.type) < @intFromEnum(a2.type);
+        comptime std.sort.block(OptionField, &opt_buf, {}, struct {
+            pub fn lessfn(_: void, o1: OptionField, o2: OptionField) bool {
+                if (o1.o.type == o2.o.type) return false;
+                return @intFromEnum(o1.o.type) < @intFromEnum(o2.o.type);
             }
         }.lessfn);
 
-        const flags: []Option = comptime blk: {
+        const flags: []OptionField = comptime blk: {
             var i: usize = 0;
             for (opt_buf) |a| {
-                if (a.type != .flag) break;
+                if (a.o.type != .flag) break;
                 i += 1;
             }
             break :blk opt_buf[0..i];
         };
 
-        const optionals: []Option = comptime blk: {
+        const optionals: []OptionField = comptime blk: {
             var i: usize = flags.len;
             for (opt_buf[flags.len..]) |a| {
-                if (a.type != .optional) break;
+                if (a.o.type != .optional) break;
                 i += 1;
             }
             break :blk opt_buf[flags.len..i];
@@ -154,19 +152,19 @@ pub const Parser = struct {
 
         var positional_idx: usize = 0;
 
-        const positionals: []Option = comptime blk: {
+        const positionals: []OptionField = comptime blk: {
             var i: usize = flags.len + optionals.len;
             for (opt_buf[flags.len + optionals.len ..]) |a| {
-                if (a.type != .positional) break;
+                if (a.o.type != .positional) break;
                 i += 1;
             }
             break :blk opt_buf[flags.len + optionals.len .. i];
         };
 
-        const commands: []Option = comptime blk: {
+        const commands: []OptionField = comptime blk: {
             var i: usize = flags.len + optionals.len + positionals.len;
             for (opt_buf[flags.len + optionals.len + positionals.len ..]) |a| {
-                if (a.type != .command) break;
+                if (a.o.type != .command) break;
                 i += 1;
             }
             break :blk opt_buf[flags.len + optionals.len + positionals.len .. i];
@@ -178,25 +176,25 @@ pub const Parser = struct {
 
                 next_dash: for (s[1..], 0..) |c, i| {
                     inline for (flags) |o| {
-                        if (o.short == c) {
-                            try parseField(self, st, o, &@field(st, o.field.?.name), null);
-                            if (o.stop) return else continue :next_dash;
+                        if (o.o.short == c) {
+                            try parseField(self, st, o, &@field(st, o.f.name), null);
+                            if (o.o.stop) return else continue :next_dash;
                         }
                     }
 
                     inline for (optionals) |o| {
-                        if (o.short == c) {
+                        if (o.o.short == c) {
                             if (i == s.len - 2) {
                                 if (it.next()) |next| {
-                                    try parseField(self, st, o, &@field(st, o.field.?.name), next);
+                                    try parseField(self, st, o, &@field(st, o.f.name), next);
                                 } else {
                                     // std.log.err("option -{c} requires an argument", .{o.short.?});
                                     return error.MissingArgument;
                                 }
                             } else {
-                                try parseField(self, st, o, &@field(st, o.field.?.name), s[1..][i + 1 ..]);
+                                try parseField(self, st, o, &@field(st, o.f.name), s[1..][i + 1 ..]);
                             }
-                            if (o.stop) return else continue :next;
+                            if (o.o.stop) return else continue :next;
                         }
                     }
                     // std.log.err("unknown option -{c}", .{c});
@@ -213,24 +211,24 @@ pub const Parser = struct {
                     var tmp = std.mem.splitScalar(u8, s, '=');
                     const key = tmp.next().?;
                     inline for (optionals) |o| {
-                        if (std.mem.eql(u8, o.name orelse continue, key[2..])) {
-                            try parseField(self, st, o, &@field(st, o.field.?.name), s[key.len + 1 ..]);
-                            if (o.stop) return else continue :next;
+                        if (std.mem.eql(u8, o.o.name orelse continue, key[2..])) {
+                            try parseField(self, st, o, &@field(st, o.f.name), s[key.len + 1 ..]);
+                            if (o.o.stop) return else continue :next;
                         }
                     }
                 } else {
                     inline for (flags) |o| {
-                        if (std.mem.eql(u8, o.name orelse continue, s[2..])) {
-                            try parseField(self, st, o, &@field(st, o.field.?.name), null);
-                            if (o.stop) return else continue :next;
+                        if (std.mem.eql(u8, o.o.name orelse continue, s[2..])) {
+                            try parseField(self, st, o, &@field(st, o.f.name), null);
+                            if (o.o.stop) return else continue :next;
                         }
                     }
 
                     inline for (optionals) |o| {
-                        if (std.mem.eql(u8, o.name orelse continue, s[2..])) {
+                        if (std.mem.eql(u8, o.o.name orelse continue, s[2..])) {
                             if (it.next()) |next| {
-                                try parseField(self, st, o, &@field(st, o.field.?.name), next);
-                                if (o.stop) return else continue :next;
+                                try parseField(self, st, o, &@field(st, o.f.name), next);
+                                if (o.o.stop) return else continue :next;
                             } else {
                                 // std.log.err("option {s} requires an argument", .{s});
                                 return error.MissingArgument;
@@ -248,29 +246,29 @@ pub const Parser = struct {
                 if (i == positional_idx) {
                     if (std.mem.eql(u8, "--", s)) {
                         if (it.next()) |next| {
-                            try parseField(self, st, o, &@field(st, o.field.?.name), next);
+                            try parseField(self, st, o, &@field(st, o.f.name), next);
                             positional_idx += 1;
-                            if (o.stop) return else continue :next;
+                            if (o.o.stop) return else continue :next;
                         } else {
                             // std.log.err("option {s} requires an argument", .{s});
                             return error.MissingArgument;
                         }
                     } else {
-                        try parseField(self, st, o, &@field(st, o.field.?.name), s);
+                        try parseField(self, st, o, &@field(st, o.f.name), s);
                         positional_idx += 1;
-                        if (o.stop) return else continue :next;
+                        if (o.o.stop) return else continue :next;
                     }
                 }
             }
 
             inline for (commands) |o| {
-                const u = @field(st, o.field.?.name);
+                const u = @field(st, o.f.name);
                 const ui = @typeInfo(@TypeOf(u));
                 const uci = @typeInfo(ui.optional.child);
                 inline for (uci.@"union".fields) |f| {
                     if (std.mem.eql(u8, s, f.name)) {
-                        @field(st, o.field.?.name) = @unionInit(ui.optional.child, f.name, .{});
-                        return @call(.auto, Parser.parse, .{ self, it, &@field(@field(st, o.field.?.name).?, f.name) });
+                        @field(st, o.f.name) = @unionInit(ui.optional.child, f.name, .{});
+                        return @call(.auto, Parser.parse, .{ self, it, &@field(@field(st, o.f.name).?, f.name) });
                     }
                 }
             }
@@ -280,19 +278,17 @@ pub const Parser = struct {
         }
     }
 
-    fn parseField(self: *Parser, st: anytype, comptime opt: Option, dst: anytype, src: ?[]const u8) !void {
-        const field = opt.field.?;
-
+    fn parseField(self: *Parser, st: anytype, comptime o: OptionField, dst: anytype, src: ?[]const u8) !void {
         if (@hasDecl(@TypeOf(st.*), "OptionMetaFn")) {
-            if (@hasDecl(@TypeOf(st.*).OptionMetaFn, field.name)) {
-                return switch (opt.type) {
-                    .flag => @call(.auto, @field(@TypeOf(st.*).OptionMetaFn, field.name), .{ self, dst }),
-                    else => @call(.auto, @field(@TypeOf(st.*).OptionMetaFn, field.name), .{ self, dst, src.? }),
+            if (@hasDecl(@TypeOf(st.*).OptionMetaFn, o.f.name)) {
+                return switch (o.o.type) {
+                    .flag => @call(.auto, @field(@TypeOf(st.*).OptionMetaFn, o.f.name), .{ self, dst }),
+                    else => @call(.auto, @field(@TypeOf(st.*).OptionMetaFn, o.f.name), .{ self, dst, src.? }),
                 };
             }
         }
 
-        return switch (opt.type) {
+        return switch (o.o.type) {
             .flag => defaultParseFlag(self, dst),
             .optional, .positional => defaultParse(self, dst, src.?),
             .command, .ignored => @compileError("Unsupported type"),
