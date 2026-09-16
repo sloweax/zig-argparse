@@ -10,15 +10,15 @@ pub const Example = struct {
     } = null,
 
     pub const OptionMeta = struct {
-        pub const cmd = Option.command.withName("cmd");
-        pub const num = Option.positional.withName("num");
+        pub const cmd = Option.command.withDefaults("cmd");
+        pub const num = Option.positional.withDefaults("num");
     };
 
     pub const Cmd1 = struct {
         num: i32 = 0,
 
         pub const OptionMeta = struct {
-            pub const num = Option.positional.withName("num");
+            pub const num = Option.positional.withDefaults("num");
         };
     };
 
@@ -26,7 +26,7 @@ pub const Example = struct {
         num: i32 = 0,
 
         pub const OptionMeta = struct {
-            pub const num = Option.positional.withName("num");
+            pub const num = Option.positional.withDefaults("num");
         };
     };
 };

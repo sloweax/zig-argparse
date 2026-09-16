@@ -1,14 +1,9 @@
 pub const Option = struct {
     name: ?[]const u8 = null,
     short: ?u8 = null,
+    metavar: ?[]const u8 = null,
     description: ?[]const u8 = null,
-    type: enum {
-        flag,
-        optional,
-        positional,
-        command,
-        ignored,
-    } = .optional,
+    type: Type = .optional,
 
     /// stops parsing after hitting this option
     stop: bool = false,
@@ -19,15 +14,41 @@ pub const Option = struct {
     pub const command: Option = .{ .type = .command };
     pub const ignored: Option = .{ .type = .ignored };
 
+    pub const Type = enum {
+        flag,
+        optional,
+        positional,
+        command,
+        ignored,
+    };
+
+    pub fn withDefaults(o: Option, name: []const u8) Option {
+        var new = o;
+        new.name = name;
+        switch (new.type) {
+            .flag, .optional => {
+                if (name.len > 0) {
+                    new.short = name[0];
+                    if (name.len == 1)
+                        new.name = null;
+                }
+                if (new.type == .optional)
+                    new.metavar = name;
+            },
+            else => {},
+        }
+        return new;
+    }
+
     pub fn withName(o: Option, name: []const u8) Option {
         var new = o;
-        if (name.len == 0) {
-            new.name = null;
-            new.short = null;
-        } else {
-            new.short = name[0];
-            new.name = if (name.len == 1) null else name;
-        }
+        new.name = name;
+        return new;
+    }
+
+    pub fn withMetavar(o: Option, m: []const u8) Option {
+        var new = o;
+        new.metavar = m;
         return new;
     }
 };
@@ -86,18 +107,208 @@ pub fn defaultParse(p: *Parser, dst: anytype, src: []const u8) !void {
 }
 
 pub const Parser = struct {
-    // TODO: add option to generate usage and --help
+    // TODO: add option to generate --help
     // TODO: add option to generate diagnostics
 
     pub const Options = struct {
         /// only used as convenience in some parser functions
         a: ?std.mem.Allocator = null,
+        name: ?[]const u8 = null,
     };
 
     o: Options,
 
     pub fn init(opt: Options) Parser {
         return .{ .o = opt };
+    }
+
+    pub fn usage(self: *Parser, w: *std.Io.Writer, comptime T: type) !void {
+        var buf: [4096]u8 = undefined;
+        var arr = std.ArrayList(u8).initBuffer(&buf);
+
+        const progname = self.o.name orelse "?";
+        const pad = progname.len + 2 + 6;
+        const max = 80;
+        var cur = pad;
+
+        try w.print("usage: {s} ", .{progname});
+
+        if (comptime countOptionOfType(T, .flag) > 0) {
+            next: for (optionsOfType(T, .flag)) |o| {
+                while (true) {
+                    while (cur < pad) {
+                        try w.writeByte(' ');
+                        cur += 1;
+                    }
+                    if (cur != pad) try arr.appendBounded(' ');
+                    try arr.appendBounded('[');
+                    if (o.short) |s| {
+                        try arr.appendBounded('-');
+                        try arr.appendBounded(s);
+                    } else {
+                        try arr.appendSliceBounded("--");
+                        try arr.appendSliceBounded(o.name.?);
+                    }
+                    try arr.appendBounded(']');
+                    if (cur == pad and arr.items.len + pad > max) {
+                        cur = 0;
+                        try w.writeAll(arr.items);
+                        try w.writeByte('\n');
+                        arr.clearRetainingCapacity();
+                        continue :next;
+                    }
+                    if (cur + arr.items.len > max) {
+                        cur = 0;
+                        try w.writeByte('\n');
+                        arr.clearRetainingCapacity();
+                        continue;
+                    }
+                    try w.writeAll(arr.items);
+                    cur += arr.items.len;
+                    arr.clearRetainingCapacity();
+                    continue :next;
+                }
+            }
+        }
+
+        if (comptime countOptionOfType(T, .optional) > 0) {
+            next: for (optionsOfType(T, .optional)) |o| {
+                while (true) {
+                    while (cur < pad) {
+                        try w.writeByte(' ');
+                        cur += 1;
+                    }
+                    if (cur != pad) try arr.appendBounded(' ');
+                    try arr.appendBounded('[');
+                    if (o.short) |s| {
+                        try arr.appendBounded('-');
+                        try arr.appendBounded(s);
+                    } else {
+                        try arr.appendSliceBounded("--");
+                        try arr.appendSliceBounded(o.name.?);
+                    }
+                    if (o.metavar) |m| {
+                        try arr.appendBounded(' ');
+                        try arr.appendSliceBounded(m);
+                    }
+                    try arr.appendBounded(']');
+                    if (cur == pad and arr.items.len + pad > max) {
+                        cur = 0;
+                        try w.writeAll(arr.items);
+                        try w.writeByte('\n');
+                        arr.clearRetainingCapacity();
+                        continue :next;
+                    }
+                    if (cur + arr.items.len > max) {
+                        cur = 0;
+                        try w.writeByte('\n');
+                        arr.clearRetainingCapacity();
+                        continue;
+                    }
+                    try w.writeAll(arr.items);
+                    cur += arr.items.len;
+                    arr.clearRetainingCapacity();
+                    continue :next;
+                }
+            }
+        }
+
+        if (comptime countOptionOfType(T, .positional) > 0) {
+            next: for (optionsOfType(T, .positional)) |o| {
+                while (true) {
+                    while (cur < pad) {
+                        try w.writeByte(' ');
+                        cur += 1;
+                    }
+                    if (cur != pad) try arr.appendBounded(' ');
+                    try arr.appendBounded('[');
+                    try arr.appendSliceBounded(o.name.?);
+                    try arr.appendBounded(']');
+                    if (cur == pad and arr.items.len + pad > max) {
+                        cur = 0;
+                        try w.writeAll(arr.items);
+                        try w.writeByte('\n');
+                        arr.clearRetainingCapacity();
+                        continue :next;
+                    }
+                    if (cur + arr.items.len > max) {
+                        cur = 0;
+                        try w.writeByte('\n');
+                        arr.clearRetainingCapacity();
+                        continue;
+                    }
+                    try w.writeAll(arr.items);
+                    cur += arr.items.len;
+                    arr.clearRetainingCapacity();
+                    continue :next;
+                }
+            }
+        }
+
+        if (comptime countOptionOfType(T, .command) > 0) {
+            next: for (optionsOfType(T, .command)) |o| {
+                while (true) {
+                    while (cur < pad) {
+                        try w.writeByte(' ');
+                        cur += 1;
+                    }
+                    if (cur != pad) try arr.appendBounded(' ');
+                    try arr.appendSliceBounded(o.name.?);
+                    if (cur == pad and arr.items.len + pad > max) {
+                        cur = 0;
+                        try w.writeAll(arr.items);
+                        try w.writeByte('\n');
+                        arr.clearRetainingCapacity();
+                        continue :next;
+                    }
+                    if (cur + arr.items.len > max) {
+                        cur = 0;
+                        try w.writeByte('\n');
+                        arr.clearRetainingCapacity();
+                        continue;
+                    }
+                    try w.writeAll(arr.items);
+                    cur += arr.items.len;
+                    arr.clearRetainingCapacity();
+                    continue :next;
+                }
+            }
+        }
+    }
+
+    pub fn options(comptime T: type) [@typeInfo(T).@"struct".fields.len]Option {
+        const ti = comptime @typeInfo(T);
+        comptime var opt_buf: [ti.@"struct".fields.len]Option = undefined;
+
+        inline for (ti.@"struct".fields, 0..) |f, i| {
+            const o: Option = comptime blk: {
+                if (!@hasDecl(T, "OptionMeta")) break :blk Option.optional.withDefaults(f.name);
+                if (!@hasDecl(T.OptionMeta, f.name)) break :blk Option.optional.withDefaults(f.name);
+                break :blk @field(T.OptionMeta, f.name);
+            };
+            opt_buf[i] = o;
+        }
+
+        return opt_buf;
+    }
+
+    fn optionsOfType(comptime T: type, comptime t: Option.Type) [countOptionOfType(T, t)]Option {
+        var i: usize = 0;
+        var opts: [countOptionOfType(T, t)]Option = undefined;
+        for (options(T)) |o| {
+            if (o.type != t) continue;
+            opts[i] = o;
+            i += 1;
+        }
+        return opts;
+    }
+
+    fn countOptionOfType(comptime T: type, comptime t: Option.Type) usize {
+        var s = 0;
+        for (options(T)) |o| {
+            if (o.type == t) s += 1;
+        }
+        return s;
     }
 
     pub fn parse(self: *Parser, it: *std.process.Args.Iterator, st: anytype) !void {
@@ -110,65 +321,64 @@ pub const Parser = struct {
             },
         }
 
-        comptime var opt_buf: [ti.@"struct".fields.len]OptionField = undefined;
-
-        inline for (ti.@"struct".fields, 0..) |f, i| {
-            const o: Option = comptime blk: {
-                if (!@hasDecl(@TypeOf(st.*), "OptionMeta")) break :blk Option.optional.withName(f.name);
-                if (!@hasDecl(@TypeOf(st.*).OptionMeta, f.name)) break :blk Option.optional.withName(f.name);
-                break :blk @field(@TypeOf(st.*).OptionMeta, f.name);
-            };
-            opt_buf[i] = .{ .o = o, .f = f, .i = i };
+        const opts = comptime options(@TypeOf(st.*));
+        comptime var optsf: [opts.len]OptionField = undefined;
+        inline for (opts, 0..) |o, i| {
+            optsf[i] = .{ .o = o, .i = i, .f = ti.@"struct".fields[i] };
         }
 
-        inline for (opt_buf) |o| {
-            std.debug.assert((o.o.name != null or o.o.short != null) or o.o.type == .ignored);
-        }
-
-        comptime std.sort.block(OptionField, &opt_buf, {}, struct {
+        comptime std.sort.block(OptionField, &optsf, {}, struct {
             pub fn lessfn(_: void, o1: OptionField, o2: OptionField) bool {
                 if (o1.o.type == o2.o.type) return o1.i < o2.i;
                 return @intFromEnum(o1.o.type) < @intFromEnum(o2.o.type);
             }
         }.lessfn);
 
+        inline for (opts) |o| {
+            std.debug.assert((o.name != null or o.short != null) or o.type == .ignored);
+        }
+
         const flags: []OptionField = comptime blk: {
             var i: usize = 0;
-            for (opt_buf) |a| {
+            for (optsf) |a| {
                 if (a.o.type != .flag) break;
                 i += 1;
             }
-            break :blk opt_buf[0..i];
+            break :blk optsf[0..i];
         };
 
         const optionals: []OptionField = comptime blk: {
             var i: usize = flags.len;
-            for (opt_buf[flags.len..]) |a| {
+            for (optsf[flags.len..]) |a| {
                 if (a.o.type != .optional) break;
                 i += 1;
             }
-            break :blk opt_buf[flags.len..i];
+            break :blk optsf[flags.len..i];
         };
 
         var positional_idx: usize = 0;
 
         const positionals: []OptionField = comptime blk: {
             var i: usize = flags.len + optionals.len;
-            for (opt_buf[flags.len + optionals.len ..]) |a| {
+            for (optsf[flags.len + optionals.len ..]) |a| {
                 if (a.o.type != .positional) break;
                 i += 1;
             }
-            break :blk opt_buf[flags.len + optionals.len .. i];
+            break :blk optsf[flags.len + optionals.len .. i];
         };
+
+        inline for (positionals) |o| std.debug.assert(o.o.name != null);
 
         const commands: []OptionField = comptime blk: {
             var i: usize = flags.len + optionals.len + positionals.len;
-            for (opt_buf[flags.len + optionals.len + positionals.len ..]) |a| {
+            for (optsf[flags.len + optionals.len + positionals.len ..]) |a| {
                 if (a.o.type != .command) break;
                 i += 1;
             }
-            break :blk opt_buf[flags.len + optionals.len + positionals.len .. i];
+            break :blk optsf[flags.len + optionals.len + positionals.len .. i];
         };
+
+        inline for (commands) |o| std.debug.assert(o.o.name != null);
 
         next: while (it.next()) |s| {
             if (s.len >= 2 and s[0] == '-' and s[1] != '-') {

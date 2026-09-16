@@ -13,10 +13,10 @@ pub const Example = struct {
     ignored: i32 = 0,
 
     pub const OptionMeta = struct {
-        pub const ip = Option.positional.withName("ip");
-        pub const flag = Option.flag.withName("flag");
+        pub const ip = Option.positional.withDefaults("ip");
+        pub const flag = Option.flag.withDefaults("flag");
         pub const ignored = Option.ignored;
-        // other fields are equivalent to Option.optional.withName("xyz");
+        // other fields are equivalent to Option.optional.withDefaults(field_name);
     };
 
     pub const OptionMetaFn = struct {
@@ -71,15 +71,15 @@ pub const Example = struct {
     } = null,
 
     pub const OptionMeta = struct {
-        pub const cmd = Option.command.withName("cmd");
-        pub const num = Option.positional.withName("num");
+        pub const cmd = Option.command.withDefaults("cmd");
+        pub const num = Option.positional.withDefaults("num");
     };
 
     pub const Cmd1 = struct {
         num: i32 = 0,
 
         pub const OptionMeta = struct {
-            pub const num = Option.positional.withName("num");
+            pub const num = Option.positional.withDefaults("num");
         };
     };
 
@@ -87,7 +87,7 @@ pub const Example = struct {
         num: i32 = 0,
 
         pub const OptionMeta = struct {
-            pub const num = Option.positional.withName("num");
+            pub const num = Option.positional.withDefaults("num");
         };
     };
 };
