@@ -51,6 +51,12 @@ pub const Option = struct {
         new.metavar = m;
         return new;
     }
+
+    pub fn withDescription(o: Option, d: []const u8) Option {
+        var new = o;
+        new.description = d;
+        return new;
+    }
 };
 
 const OptionField = struct { o: Option, f: std.builtin.Type.StructField, i: usize };
@@ -107,7 +113,6 @@ pub fn defaultParse(p: *Parser, dst: anytype, src: []const u8) !void {
 }
 
 pub const Parser = struct {
-    // TODO: add option to generate --help
     // TODO: add option to generate diagnostics
 
     pub const Options = struct {
@@ -120,6 +125,105 @@ pub const Parser = struct {
 
     pub fn init(opt: Options) Parser {
         return .{ .o = opt };
+    }
+
+    fn printDescription(w: *std.Io.Writer, start: usize, pad: usize, m: []const u8) !void {
+        var cur: usize = start;
+        const max = 80;
+        var it = std.mem.tokenizeScalar(u8, m, ' ');
+        next: while (it.next()) |s| {
+            while (true) {
+                while (cur < pad) {
+                    try w.writeByte(' ');
+                    cur += 1;
+                }
+                if (cur == pad and s.len + pad > max) {
+                    try w.writeAll(s);
+                    try w.writeByte('\n');
+                    cur = 0;
+                    continue :next;
+                }
+                if (cur + s.len > max) {
+                    cur = 0;
+                    try w.writeByte('\n');
+                    continue;
+                }
+                try w.writeAll(s);
+                cur += s.len;
+                if (it.peek() != null) {
+                    if (cur + 1 > max) {
+                        cur = 0;
+                        try w.writeByte('\n');
+                    } else {
+                        cur += 1;
+                        try w.writeByte(' ');
+                    }
+                }
+                continue :next;
+            }
+        }
+    }
+
+    pub fn help(self: *Parser, w: *std.Io.Writer, comptime T: type) !void {
+        _ = self;
+        var buf: [4096]u8 = undefined;
+        var max: usize = 0;
+        var arr = std.ArrayList(u8).initBuffer(&buf);
+        const pad = 4;
+        for (options(T)) |o| {
+            var cur: usize = 0;
+            switch (o.type) {
+                .optional, .flag => {
+                    if (o.short != null) {
+                        cur += 2;
+                    }
+                    if (o.name) |n| {
+                        if (cur != 0) cur += 2;
+                        cur += n.len + 2;
+                    }
+                    if (o.metavar) |m| {
+                        cur += m.len + 1;
+                    }
+                },
+                .command, .positional => {
+                    cur += o.name.?.len;
+                },
+                .ignored => continue,
+            }
+            max = @max(cur, max);
+        }
+
+        for (optionsOfType(T, .flag) ++ optionsOfType(T, .optional)) |o| {
+            for (0..pad) |_| try w.writeByte(' ');
+            if (o.short) |s| {
+                try arr.appendBounded('-');
+                try arr.appendBounded(s);
+            }
+            if (o.name) |n| {
+                if (arr.items.len != 0) try arr.appendSliceBounded(", ");
+                try arr.appendSliceBounded("--");
+                try arr.appendSliceBounded(n);
+            }
+            if (o.metavar) |m| {
+                try arr.appendBounded(' ');
+                try arr.appendSliceBounded(m);
+            }
+            try w.writeAll(arr.items);
+            if (o.description) |d| {
+                try printDescription(w, pad + arr.items.len, max + pad * 2, d);
+            }
+            try w.writeByte('\n');
+            arr.clearRetainingCapacity();
+        }
+
+        for (optionsOfType(T, .positional) ++ optionsOfType(T, .command)) |o| {
+            for (0..pad) |_| try w.writeByte(' ');
+            try w.writeAll(o.name.?);
+            if (o.description) |d| {
+                try printDescription(w, pad + o.name.?.len, max + pad * 2, d);
+            }
+            try w.writeByte('\n');
+        }
     }
 
     pub fn usage(self: *Parser, w: *std.Io.Writer, comptime T: type, prefix: ?[]const u8) !void {
@@ -139,145 +243,137 @@ pub const Parser = struct {
 
         var cur = pad;
 
-        if (comptime countOptionOfType(T, .flag) > 0) {
-            next: for (optionsOfType(T, .flag)) |o| {
-                while (true) {
-                    while (cur < pad) {
-                        try w.writeByte(' ');
-                        cur += 1;
-                    }
-                    if (cur != pad) try arr.appendBounded(' ');
-                    try arr.appendBounded('[');
-                    if (o.short) |s| {
-                        try arr.appendBounded('-');
-                        try arr.appendBounded(s);
-                    } else {
-                        try arr.appendSliceBounded("--");
-                        try arr.appendSliceBounded(o.name.?);
-                    }
-                    try arr.appendBounded(']');
-                    if (cur == pad and arr.items.len + pad > max) {
-                        cur = 0;
-                        try w.writeAll(arr.items);
-                        try w.writeByte('\n');
-                        arr.clearRetainingCapacity();
-                        continue :next;
-                    }
-                    if (cur + arr.items.len > max) {
-                        cur = 0;
-                        try w.writeByte('\n');
-                        arr.clearRetainingCapacity();
-                        continue;
-                    }
-                    try w.writeAll(arr.items);
-                    cur += arr.items.len;
-                    arr.clearRetainingCapacity();
-                    continue :next;
+        next: for (optionsOfType(T, .flag)) |o| {
+            while (true) {
+                while (cur < pad) {
+                    try w.writeByte(' ');
+                    cur += 1;
                 }
-            }
-        }
-
-        if (comptime countOptionOfType(T, .optional) > 0) {
-            next: for (optionsOfType(T, .optional)) |o| {
-                while (true) {
-                    while (cur < pad) {
-                        try w.writeByte(' ');
-                        cur += 1;
-                    }
-                    if (cur != pad) try arr.appendBounded(' ');
-                    try arr.appendBounded('[');
-                    if (o.short) |s| {
-                        try arr.appendBounded('-');
-                        try arr.appendBounded(s);
-                    } else {
-                        try arr.appendSliceBounded("--");
-                        try arr.appendSliceBounded(o.name.?);
-                    }
-                    if (o.metavar) |m| {
-                        try arr.appendBounded(' ');
-                        try arr.appendSliceBounded(m);
-                    }
-                    try arr.appendBounded(']');
-                    if (cur == pad and arr.items.len + pad > max) {
-                        cur = 0;
-                        try w.writeAll(arr.items);
-                        try w.writeByte('\n');
-                        arr.clearRetainingCapacity();
-                        continue :next;
-                    }
-                    if (cur + arr.items.len > max) {
-                        cur = 0;
-                        try w.writeByte('\n');
-                        arr.clearRetainingCapacity();
-                        continue;
-                    }
-                    try w.writeAll(arr.items);
-                    cur += arr.items.len;
-                    arr.clearRetainingCapacity();
-                    continue :next;
-                }
-            }
-        }
-
-        if (comptime countOptionOfType(T, .positional) > 0) {
-            next: for (optionsOfType(T, .positional)) |o| {
-                while (true) {
-                    while (cur < pad) {
-                        try w.writeByte(' ');
-                        cur += 1;
-                    }
-                    if (cur != pad) try arr.appendBounded(' ');
-                    try arr.appendBounded('[');
+                if (cur != pad) try arr.appendBounded(' ');
+                try arr.appendBounded('[');
+                if (o.short) |s| {
+                    try arr.appendBounded('-');
+                    try arr.appendBounded(s);
+                } else {
+                    try arr.appendSliceBounded("--");
                     try arr.appendSliceBounded(o.name.?);
-                    try arr.appendBounded(']');
-                    if (cur == pad and arr.items.len + pad > max) {
-                        cur = 0;
-                        try w.writeAll(arr.items);
-                        try w.writeByte('\n');
-                        arr.clearRetainingCapacity();
-                        continue :next;
-                    }
-                    if (cur + arr.items.len > max) {
-                        cur = 0;
-                        try w.writeByte('\n');
-                        arr.clearRetainingCapacity();
-                        continue;
-                    }
+                }
+                try arr.appendBounded(']');
+                if (cur == pad and arr.items.len + pad > max) {
+                    cur = 0;
                     try w.writeAll(arr.items);
-                    cur += arr.items.len;
+                    try w.writeByte('\n');
                     arr.clearRetainingCapacity();
                     continue :next;
                 }
+                if (cur + arr.items.len > max) {
+                    cur = 0;
+                    try w.writeByte('\n');
+                    arr.clearRetainingCapacity();
+                    continue;
+                }
+                try w.writeAll(arr.items);
+                cur += arr.items.len;
+                arr.clearRetainingCapacity();
+                continue :next;
             }
         }
 
-        if (comptime countOptionOfType(T, .command) > 0) {
-            next: for (optionsOfType(T, .command)) |o| {
-                while (true) {
-                    while (cur < pad) {
-                        try w.writeByte(' ');
-                        cur += 1;
-                    }
-                    if (cur != pad) try arr.appendBounded(' ');
+        next: for (optionsOfType(T, .optional)) |o| {
+            while (true) {
+                while (cur < pad) {
+                    try w.writeByte(' ');
+                    cur += 1;
+                }
+                if (cur != pad) try arr.appendBounded(' ');
+                try arr.appendBounded('[');
+                if (o.short) |s| {
+                    try arr.appendBounded('-');
+                    try arr.appendBounded(s);
+                } else {
+                    try arr.appendSliceBounded("--");
                     try arr.appendSliceBounded(o.name.?);
-                    if (cur == pad and arr.items.len + pad > max) {
-                        cur = 0;
-                        try w.writeAll(arr.items);
-                        try w.writeByte('\n');
-                        arr.clearRetainingCapacity();
-                        continue :next;
-                    }
-                    if (cur + arr.items.len > max) {
-                        cur = 0;
-                        try w.writeByte('\n');
-                        arr.clearRetainingCapacity();
-                        continue;
-                    }
+                }
+                if (o.metavar) |m| {
+                    try arr.appendBounded(' ');
+                    try arr.appendSliceBounded(m);
+                }
+                try arr.appendBounded(']');
+                if (cur == pad and arr.items.len + pad > max) {
+                    cur = 0;
                     try w.writeAll(arr.items);
-                    cur += arr.items.len;
+                    try w.writeByte('\n');
                     arr.clearRetainingCapacity();
                     continue :next;
                 }
+                if (cur + arr.items.len > max) {
+                    cur = 0;
+                    try w.writeByte('\n');
+                    arr.clearRetainingCapacity();
+                    continue;
+                }
+                try w.writeAll(arr.items);
+                cur += arr.items.len;
+                arr.clearRetainingCapacity();
+                continue :next;
+            }
+        }
+
+        next: for (optionsOfType(T, .positional)) |o| {
+            while (true) {
+                while (cur < pad) {
+                    try w.writeByte(' ');
+                    cur += 1;
+                }
+                if (cur != pad) try arr.appendBounded(' ');
+                try arr.appendBounded('[');
+                try arr.appendSliceBounded(o.name.?);
+                try arr.appendBounded(']');
+                if (cur == pad and arr.items.len + pad > max) {
+                    cur = 0;
+                    try w.writeAll(arr.items);
+                    try w.writeByte('\n');
+                    arr.clearRetainingCapacity();
+                    continue :next;
+                }
+                if (cur + arr.items.len > max) {
+                    cur = 0;
+                    try w.writeByte('\n');
+                    arr.clearRetainingCapacity();
+                    continue;
+                }
+                try w.writeAll(arr.items);
+                cur += arr.items.len;
+                arr.clearRetainingCapacity();
+                continue :next;
+            }
+        }
+
+        next: for (optionsOfType(T, .command)) |o| {
+            while (true) {
+                while (cur < pad) {
+                    try w.writeByte(' ');
+                    cur += 1;
+                }
+                if (cur != pad) try arr.appendBounded(' ');
+                try arr.appendSliceBounded(o.name.?);
+                if (cur == pad and arr.items.len + pad > max) {
+                    cur = 0;
+                    try w.writeAll(arr.items);
+                    try w.writeByte('\n');
+                    arr.clearRetainingCapacity();
+                    continue :next;
+                }
+                if (cur + arr.items.len > max) {
+                    cur = 0;
+                    try w.writeByte('\n');
+                    arr.clearRetainingCapacity();
+                    continue;
+                }
+                try w.writeAll(arr.items);
+                cur += arr.items.len;
+                arr.clearRetainingCapacity();
+                continue :next;
             }
         }
     }
@@ -301,6 +397,7 @@ pub const Parser = struct {
     fn optionsOfType(comptime T: type, comptime t: Option.Type) [countOptionOfType(T, t)]Option {
         var i: usize = 0;
         var opts: [countOptionOfType(T, t)]Option = undefined;
+        if (opts.len == 0) return opts;
         for (options(T)) |o| {
             if (o.type != t) continue;
             opts[i] = o;
