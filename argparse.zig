@@ -122,16 +122,22 @@ pub const Parser = struct {
         return .{ .o = opt };
     }
 
-    pub fn usage(self: *Parser, w: *std.Io.Writer, comptime T: type) !void {
+    pub fn usage(self: *Parser, w: *std.Io.Writer, comptime T: type, prefix: ?[]const u8) !void {
         var buf: [4096]u8 = undefined;
         var arr = std.ArrayList(u8).initBuffer(&buf);
 
         const progname = self.o.name orelse "?";
-        const pad = progname.len + 2 + 6;
+        var pad = progname.len + 2 + 6;
         const max = 80;
-        var cur = pad;
 
         try w.print("usage: {s} ", .{progname});
+
+        if (prefix) |p| {
+            try w.print("{s} ", .{p});
+            pad += p.len + 1;
+        }
+
+        var cur = pad;
 
         if (comptime countOptionOfType(T, .flag) > 0) {
             next: for (optionsOfType(T, .flag)) |o| {
