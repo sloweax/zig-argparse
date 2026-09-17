@@ -130,26 +130,41 @@ pub const Parser = struct {
     fn printDescription(w: *std.Io.Writer, start: usize, pad: usize, m: []const u8) !void {
         var cur: usize = start;
         const max = 80;
-        var it = std.mem.tokenizeScalar(u8, m, ' ');
+        var it = std.mem.tokenizeAny(u8, m, " \n");
         next: while (it.next()) |s| {
             while (true) {
+                var have_newline: bool = false;
+                const str = blk: {
+                    if (it.peek() == null) break :blk s;
+                    // hacky way to check if it ends with newline
+                    var tmp = s;
+                    tmp.len += 1;
+                    if (tmp[tmp.len - 1] == '\n') have_newline = true;
+                    break :blk s;
+                };
+
                 while (cur < pad) {
                     try w.writeByte(' ');
                     cur += 1;
                 }
-                if (cur == pad and s.len + pad > max) {
-                    try w.writeAll(s);
+                if (cur == pad and str.len + pad > max) {
+                    try w.writeAll(str);
                     try w.writeByte('\n');
                     cur = 0;
                     continue :next;
                 }
-                if (cur + s.len > max) {
+                if (cur + str.len > max) {
                     cur = 0;
                     try w.writeByte('\n');
                     continue;
                 }
-                try w.writeAll(s);
-                cur += s.len;
+                try w.writeAll(str);
+                cur += str.len;
+                if (have_newline) {
+                    cur = 0;
+                    try w.writeByte('\n');
+                    continue :next;
+                }
                 if (it.peek() != null) {
                     if (cur + 1 > max) {
                         cur = 0;
