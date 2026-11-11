@@ -30,7 +30,7 @@ pub fn main(init: std.process.Init) !void {
 
     var ex: Example = .{};
     var parser = argparse.Parser.init(.{});
-    try parser.parse(&it, &ex);
+    try parser.parse(&it, &ex, null);
 
     std.debug.print("flag: {}\n", .{ex.flag});
     std.debug.print("str: {s}\n", .{ex.str});

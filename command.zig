@@ -32,13 +32,16 @@ pub const Example = struct {
 };
 
 pub fn main(init: std.process.Init) !void {
+    var stderr = std.Io.File.stderr().writer(init.io, &.{});
+
     var it = init.minimal.args.iterate();
     // consume progname
     _ = it.next();
 
     var ex: Example = .{};
     var parser = argparse.Parser.init(.{});
-    try parser.parse(&it, &ex);
+    try parser.parse(&it, &ex, &stderr.interface);
+    try stderr.flush();
 
     std.debug.print("num: {}\n", .{ex.num});
 

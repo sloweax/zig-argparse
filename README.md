@@ -93,13 +93,16 @@ pub const Example = struct {
 };
 
 pub fn main(init: std.process.Init) !void {
+    var stderr = std.Io.File.stderr().writer(init.io, &.{});
+
     var it = init.minimal.args.iterate();
     // consume progname
     _ = it.next();
 
     var ex: Example = .{};
     var parser = argparse.Parser.init(.{});
-    try parser.parse(&it, &ex);
+    try parser.parse(&it, &ex, &stderr.interface);
+    try stderr.flush();
 
     std.debug.print("num: {}\n", .{ex.num});
 
@@ -142,33 +145,40 @@ pub const Example = struct {
     pub const OptionMeta = struct {
         pub const quiet = Option.flag.withDefaults("quiet").withDescription("this is a flag");
         pub const opt = Option.optional.withDefaults("opt").withDescription("this is an optional");
-        pub const arg = Option.positional.withDefaults("arg").withDescription("this is an argument");
-        pub const cmd = Option.command.withDefaults("cmd").withDescription("this is a command");
+        pub const arg = Option.positional.withDefaults("arg").withDescription("this is an argument").withRequired(false);
+        pub const cmd = Option.command.withDefaults("cmd").withDescription(
+            \\ this is a command. supported commands:
+            \\ cmd1
+        ).withRequired(false);
     };
 };
 
 pub fn main(init: std.process.Init) !void {
+    var stdout = std.Io.File.stdout().writer(init.io, &.{});
+    var stderr = std.Io.File.stderr().writer(init.io, &.{});
+
     var it = init.minimal.args.iterate();
 
     var ex: Example = .{};
     var parser = argparse.Parser.init(.{
         .name = it.next(),
     });
-    try parser.parse(&it, &ex);
 
-    var stdout = std.Io.File.stdout().writer(init.io, &.{});
     try parser.usage(&stdout.interface, @TypeOf(ex), null);
     try stdout.interface.writeByte('\n');
     try parser.help(&stdout.interface, @TypeOf(ex));
+    try parser.parse(&it, &ex, &stderr.interface);
+
+    try stderr.flush();
     try stdout.flush();
 }
 ```
 
 ```sh
-./help-usage 
-# usage: ./help-usage [-q] [-o opt] [arg] cmd
-#     -q, --quiet      this is a flag
-#     -o, --opt opt    this is an optional
-#     arg              this is an argument
-#     cmd              this is a command
+usage: ./help-usage [-q] [-o opt] [arg] [cmd]
+    -q, --quiet      this is a flag
+    -o, --opt opt    this is an optional
+    arg              this is an argument
+    cmd              this is a command. supported commands:
+                     cmd1
 ```
