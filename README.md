@@ -13,26 +13,31 @@ pub const Example = struct {
     ignored: i32 = 0,
 
     pub const OptionMeta = struct {
-        pub const ip = Option.positional.withDefaults("ip");
+        pub const ip = Option.positional.withDefaults("ip").withRequired(false);
         pub const flag = Option.flag.withDefaults("flag");
         pub const ignored = Option.ignored;
         // other fields are equivalent to Option.optional.withDefaults(field_name);
     };
 
     pub const OptionMetaFn = struct {
-        pub fn ip(_: *argparse.Parser, dst: *std.Io.net.IpAddress, src: []const u8) !void {
+        pub fn ip(_: *argparse.Parser(Example), dst: *std.Io.net.IpAddress, src: []const u8) !void {
             dst.* = try std.Io.net.IpAddress.parse(src, 0);
         }
     };
 };
 
 pub fn main(init: std.process.Init) !void {
+    var stdout = std.Io.File.stdout().writer(init.io, &.{});
+    var stderr = std.Io.File.stderr().writer(init.io, &.{});
+
     var it = init.minimal.args.iterate();
-    // consume progname
-    _ = it.next();
 
     var ex: Example = .{};
-    var parser = argparse.Parser.init(.{});
+    var parser: argparse.Parser(Example) = .init(.{
+        .name = it.next(),
+        .stdout = &stdout.interface,
+        .stderr = &stderr.interface,
+    });
     try parser.parse(&it, &ex);
 
     std.debug.print("flag: {}\n", .{ex.flag});
@@ -96,13 +101,13 @@ pub fn main(init: std.process.Init) !void {
     var stderr = std.Io.File.stderr().writer(init.io, &.{});
 
     var it = init.minimal.args.iterate();
-    // consume progname
-    _ = it.next();
 
     var ex: Example = .{};
-    var parser = argparse.Parser.init(.{});
-    try parser.parse(&it, &ex, &stderr.interface);
-    try stderr.flush();
+    var parser: argparse.Parser(@TypeOf(ex)) = .init(.{
+        .name = it.next(),
+        .stderr = &stderr.interface,
+    });
+    try parser.parse(&it, &ex);
 
     std.debug.print("num: {}\n", .{ex.num});
 
@@ -131,25 +136,26 @@ const argparse = @import("argparse.zig");
 const Option = argparse.Option;
 
 pub const Example = struct {
+    help: bool = false,
     quiet: bool = false,
     opt: []const u8 = "",
     arg: []const u8 = "",
-    cmd: ?union(enum) {
-        cmd1: Command1,
-    } = null,
-
-    pub const Command1 = struct {
-        ignored: i32 = 0,
-    };
 
     pub const OptionMeta = struct {
+        pub const help = Option.flag.withDefaults("help").withStop(true).withDescription("shows this message and exit");
         pub const quiet = Option.flag.withDefaults("quiet").withDescription("this is a flag");
         pub const opt = Option.optional.withDefaults("opt").withDescription("this is an optional");
         pub const arg = Option.positional.withDefaults("arg").withDescription("this is an argument").withRequired(false);
-        pub const cmd = Option.command.withDefaults("cmd").withDescription(
-            \\ this is a command. supported commands:
-            \\ cmd1
-        ).withRequired(false);
+    };
+
+    pub const OptionMetaFn = struct {
+        pub fn help(parser: *argparse.Parser(Example), dst: *bool) !void {
+            dst.* = true;
+            try parser.usage(parser.o.stdout.?, null);
+            try parser.o.stdout.?.writeByte('\n');
+            try parser.help(parser.o.stdout.?);
+            try parser.o.stdout.?.flush();
+        }
     };
 };
 
@@ -160,25 +166,25 @@ pub fn main(init: std.process.Init) !void {
     var it = init.minimal.args.iterate();
 
     var ex: Example = .{};
-    var parser = argparse.Parser.init(.{
+    var parser: argparse.Parser(@TypeOf(ex)) = .init(.{
         .name = it.next(),
+        .stderr = &stderr.interface,
+        .stdout = &stdout.interface,
     });
 
-    try parser.usage(&stdout.interface, @TypeOf(ex), null);
-    try stdout.interface.writeByte('\n');
-    try parser.help(&stdout.interface, @TypeOf(ex));
-    try parser.parse(&it, &ex, &stderr.interface);
-
-    try stderr.flush();
-    try stdout.flush();
+    try parser.parse(&it, &ex);
+    if (ex.help) return;
+    try stdout.interface.print("opt: {s}\n", .{ex.opt});
+    try stdout.interface.print("arg: {s}\n", .{ex.arg});
+    try stdout.interface.flush();
 }
 ```
 
 ```sh
-usage: ./help-usage [-q] [-o opt] [arg] [cmd]
+./help-usage -h
+usage: ./help-usage [-h] [-q] [-o opt] [arg]
+    -h, --help       shows this message and exit
     -q, --quiet      this is a flag
     -o, --opt opt    this is an optional
     arg              this is an argument
-    cmd              this is a command. supported commands:
-                     cmd1
 ```
